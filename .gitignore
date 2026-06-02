@@ -14,6 +14,10 @@ service-account*.json
 reports/
 *.report.md
 
+# Demo video — embedded in the README via a GitHub user-attachments URL,
+# not committed (keeps the repo lean). See the "Demo" section.
+feckbills.mp4
+
 # OS / editor
 .DS_Store
 .idea/

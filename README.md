@@ -9,6 +9,10 @@ and over-provisioned resources — and tells you the **exact fix**, priced in **
 
 [feckbills.com](https://feckbills.com) · GCP/GKE today · AWS & Azure next
 
+<br>
+
+<img src="hero.png" alt="FeckBills — find the money you're leaking in the cloud" width="820">
+
 </div>
 
 ---
@@ -18,6 +22,10 @@ and over-provisioned resources — and tells you the **exact fix**, priced in **
 FeckBills connects to your cloud account with a **read-only** role, finds the resources
 quietly burning money, and prints a prioritised, plain-English report. No agent to babysit,
 no write access, no secrets leave your account — just findings.
+
+## Demo
+
+https://github.com/user-attachments/assets/7f08eb91-2250-4ac7-825f-2bbdcc6692ba
 
 ## Quickstart
 
