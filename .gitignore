@@ -1,0 +1,20 @@
+node_modules/
+dist/
+*.tsbuildinfo
+*.log
+
+# Local env / credentials — never commit
+.env
+.env.*
+!.env.example
+*.json.key
+service-account*.json
+
+# Generated reports
+reports/
+*.report.md
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

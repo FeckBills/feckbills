@@ -1,0 +1,32 @@
+{
+  "name": "feckbills",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Read-only CLI that finds wasted cloud spend — orphaned, idle & over-provisioned resources — and prices the fix in £/mo. GCP/GKE today, AWS & Azure next.",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://feckbills.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FeckBills/feckbills.git"
+  },
+  "bugs": "https://github.com/FeckBills/feckbills/issues",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.28.2",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --filter @feckbills/cli dev",
+    "scan": "pnpm --filter @feckbills/cli scan",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "protobufjs"]
+  }
+}

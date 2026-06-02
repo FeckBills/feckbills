@@ -1,0 +1,22 @@
+{
+  "name": "@feckbills/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "feckbills": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "scan": "tsx src/index.ts scan",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@feckbills/core": "workspace:*",
+    "@google-cloud/monitoring": "^4.1.0",
+    "commander": "^12.1.0",
+    "google-auth-library": "^10.6.2",
+    "picocolors": "^1.1.1"
+  }
+}
