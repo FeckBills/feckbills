@@ -14,9 +14,9 @@ service-account*.json
 reports/
 *.report.md
 
-# Demo video — embedded in the README via a GitHub user-attachments URL,
-# not committed (keeps the repo lean). See the "Demo" section.
-feckbills.mp4
+# Demo source videos — the README embeds the optimised feckbills.gif instead
+# (rendered square from apps/video in the platform repo). Keep mp4 sources out of git.
+*.mp4
 
 # OS / editor
 .DS_Store
