@@ -179,6 +179,23 @@ provider SDK→domain mapping):
 pnpm test
 ```
 
+### Releasing
+
+Releases are automated with [semantic-release](https://semantic-release.gitbook.io/)
+(`.github/workflows/release.yml`). Just merge GitMoji commits to `main` — the
+emoji decides the bump:
+
+| Commit | Bump |
+| --- | --- |
+| `✨` feature | minor |
+| `🐛` fix · `🚑` hotfix · `🔒` security | patch |
+| `💥` breaking | major |
+| `👷` `📝` `♻️` chore/docs/refactor | no release |
+
+When a release is warranted it bumps every `package.json` + `AGENT_VERSION`,
+tags `vX.Y.Z`, cuts a GitHub Release, and builds + pushes the multi-arch image
+to GHCR — all in one run. No manual tagging.
+
 ### Container
 
 ```bash

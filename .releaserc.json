@@ -1,0 +1,26 @@
+{
+  "branches": ["main"],
+  "tagFormat": "v${version}",
+  "plugins": [
+    "semantic-release-gitmoji",
+    [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "node scripts/release-set-version.mjs ${nextRelease.version}"
+      }
+    ],
+    [
+      "@semantic-release/git",
+      {
+        "assets": [
+          "package.json",
+          "packages/core/package.json",
+          "packages/cli/package.json",
+          "packages/cli/src/scan.ts"
+        ],
+        "message": "🔖 v${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+      }
+    ],
+    "@semantic-release/github"
+  ]
+}

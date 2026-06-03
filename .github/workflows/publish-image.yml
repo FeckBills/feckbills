@@ -5,8 +5,10 @@ name: Publish agent image
 # Cloud Run / k8s / `docker run` at.
 #
 # Triggers:
-#   - push a version tag  (v1.2.3)  → tagged + `latest` release
-#   - manual run          (Actions → Run workflow) → `latest` + short SHA
+#   - called by release.yml after a semantic-release tag → the normal path
+#   - push a version tag  (v1.2.3)  → tagged + `latest` release (manual hotfix)
+#   - manual run: pick the *tag* in "Use workflow from" so semver resolves
+#     (running from `main` with no version only produces a short-SHA image)
 #
 # First run note: GHCR creates the package as PRIVATE. After the first push,
 # make it public once: GitHub → org Packages → feckbills-agent → Package
@@ -16,13 +18,22 @@ on:
   push:
     tags: ["v*.*.*"]
   workflow_dispatch:
+  # Called by release.yml after it tags a release, so the image builds in the
+  # same run (no PAT needed). `version` is the tag to check out and label, e.g.
+  # v1.2.3.
+  workflow_call:
+    inputs:
+      version:
+        description: Tag to build (e.g. v1.2.3)
+        type: string
+        required: true
 
 permissions:
   contents: read
   packages: write
 
 concurrency:
-  group: publish-image-${{ github.ref }}
+  group: publish-image-${{ inputs.version || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -34,6 +45,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # On a workflow_call/dispatch with a version, build that exact tag;
+          # on a tag push, build the pushed tag (the default ref).
+          ref: ${{ inputs.version || github.ref }}
 
       - name: Set up QEMU (for arm64 emulation)
         uses: docker/setup-qemu-action@v3
@@ -53,15 +68,15 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
-          # latest=auto → a semver tag push (v1.2.3) also publishes `:latest`.
-          # The raw rule below additionally moves `:latest` on a manual run from
-          # the default branch. Both matter: /console/deploy points at `:latest`.
+          # latest=auto → a semver build also publishes `:latest`. The `value=`
+          # override feeds the version explicitly so semver extraction works
+          # whether triggered by a tag push (github.ref_name) or a workflow_call
+          # (inputs.version). /console/deploy points at `:latest`.
           flavor: |
             latest=auto
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}},value=${{ inputs.version || github.ref_name }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.version || github.ref_name }}
             type=sha,format=short
 
       - name: Build & push (amd64 + arm64)

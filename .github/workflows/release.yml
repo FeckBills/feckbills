@@ -1,32 +1,28 @@
-name: Release (version bump)
+name: Release
 
-# Manually-triggered release: bump the version across the workspace, commit it,
-# and push a `vX.Y.Z` tag. The tag is what publish-image.yml builds from.
+# Automated releases via semantic-release. On every push to main it reads the
+# GitMoji in the commits since the last release (✨ → minor, 🐛 → patch,
+# 💥 → major; chore/docs/ci → no release), and when a release is warranted:
+#   1. bumps the version across the workspace + AGENT_VERSION (release-set-version.mjs)
+#   2. commits that + tags vX.Y.Z + creates the GitHub Release (notes from the commits)
+#   3. calls publish-image.yml to build & push the multi-arch image for the tag
 #
-#   Actions → Release (version bump) → Run workflow → pick patch/minor/major
-#   (or type an explicit version).
+# No PAT needed: publish runs as a downstream job in this same run (a tag pushed
+# by GITHUB_TOKEN can't trigger publish-image.yml on its own).
 #
-# Tag-triggers-publish note: a tag pushed with the default GITHUB_TOKEN will NOT
-# start publish-image.yml (GitHub blocks token-pushed events from triggering
-# other workflows). To make the image publish automatically, add a fine-grained
-# PAT with contents:write as the `RELEASE_TOKEN` secret. Without it, the bump +
-# tag still happen — just run "Publish agent image" manually for the new tag.
+# Requires `main` to accept direct pushes from github-actions[bot] (no branch
+# protection that blocks it), since semantic-release pushes the release commit.
 
 on:
-  workflow_dispatch:
-    inputs:
-      bump:
-        description: Semver bump (ignored if an explicit version is given)
-        type: choice
-        options: [patch, minor, major]
-        default: patch
-      version:
-        description: Explicit version, e.g. 0.2.0 (overrides bump)
-        type: string
-        default: ""
+  push:
+    branches: [main]
 
+# semantic-release needs to push the release commit/tag, cut a GitHub Release,
+# and comment on the released PRs/issues.
 permissions:
   contents: write
+  issues: write
+  pull-requests: write
 
 concurrency:
   group: release
@@ -35,79 +31,40 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.semantic.outputs.new_release_published }}
+      version: ${{ steps.semantic.outputs.new_release_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # need full history + tags to derive the current version
-          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0 # full history + tags so semantic-release can analyse commits
+          persist-credentials: true # keep the token so it can push the release commit/tag
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Compute next version
-        id: ver
+      - name: Semantic release
+        id: semantic
+        uses: cycjimmy/semantic-release-action@v4
+        with:
+          extra_plugins: |
+            semantic-release-gitmoji
+            @semantic-release/exec
+            @semantic-release/git
         env:
-          BUMP: ${{ inputs.bump }}
-          OVERRIDE: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          # Current version = the latest semver tag (the source of truth the
-          # publish workflow keys off), not the workspace package.json.
-          LATEST=$(git tag --list 'v*.*.*' --sort=-v:refname | head -n1)
-          CURRENT=${LATEST#v}
-          CURRENT=${CURRENT:-0.0.0}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-          if [ -n "${OVERRIDE}" ]; then
-            NEXT="${OVERRIDE#v}"
-          else
-            NEXT=$(CURRENT="$CURRENT" BUMP="$BUMP" node -e '
-              const [a, b, c] = (process.env.CURRENT).split(".").map(Number);
-              const bump = process.env.BUMP;
-              const v = bump === "major" ? [a + 1, 0, 0]
-                      : bump === "minor" ? [a, b + 1, 0]
-                      : [a, b, c + 1];
-              console.log(v.join("."));
-            ')
-          fi
-
-          if ! echo "$NEXT" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::Computed version '$NEXT' is not valid semver" && exit 1
-          fi
-          if git rev-parse "v$NEXT" >/dev/null 2>&1; then
-            echo "::error::Tag v$NEXT already exists" && exit 1
-          fi
-
-          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
-          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
-          echo "### Release \`v$NEXT\` (from \`v$CURRENT\`)" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Apply version
-        env:
-          NEXT: ${{ steps.ver.outputs.next }}
-        run: |
-          set -euo pipefail
-          for dir in . packages/core packages/cli; do
-            ( cd "$dir" && npm pkg set version="$NEXT" )
-          done
-          # AGENT_VERSION is what the CLI reports (--version) and stamps on scans.
-          sed -i "s/\(export const AGENT_VERSION = \"\)[^\"]*\(\";\)/\1$NEXT\2/" packages/cli/src/scan.ts
-          git --no-pager diff --stat
-
-      - name: Commit, tag & push
-        env:
-          NEXT: ${{ steps.ver.outputs.next }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "🔖 v$NEXT"
-          git tag -a "v$NEXT" -m "v$NEXT"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
-          git push origin "v$NEXT"
-          echo "Pushed commit + tag v$NEXT." >> "$GITHUB_STEP_SUMMARY"
-          if [ -z "${{ secrets.RELEASE_TOKEN }}" ]; then
-            echo "> ⚠️ No RELEASE_TOKEN secret — run **Publish agent image** manually for tag \`v$NEXT\`." >> "$GITHUB_STEP_SUMMARY"
-          fi
+  # Build & push the image for the freshly-cut tag — only when a release happened.
+  publish:
+    needs: release
+    if: needs.release.outputs.published == 'true'
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit
+    uses: ./.github/workflows/publish-image.yml
+    with:
+      version: v${{ needs.release.outputs.version }}
