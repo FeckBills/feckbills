@@ -13,6 +13,12 @@ and over-provisioned resources — and tells you the **exact fix**, priced in **
 
 <img src="feckbills-remotion.gif" alt="FeckBills — find the money you're leaking in the cloud" width="820">
 
+<br><br>
+
+[![Open in Cloud Shell](https://gstatic.com/cloudssh/images/open-btn.svg)](https://shell.cloud.google.com/cloudshell/open?cloudshell_git_repo=https://github.com/FeckBills/feckbills&cloudshell_workspace=deploy/gcp&cloudshell_tutorial=tutorial.md)
+
+One-click deploy the read-only agent into your own GCP project — runs as a scheduled Cloud Run Job, pushes only findings.
+
 </div>
 ---
 
