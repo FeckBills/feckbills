@@ -14,10 +14,12 @@ WORKDIR /repo
 COPY . .
 # Install only the CLI + its workspace deps, build core + cli, then produce a
 # standalone deployable (dist + prod node_modules) under /agent.
+# `--legacy`: pnpm v10 refuses to deploy non-injected workspaces by default;
+# legacy mode copies the workspace deps (incl. @feckbills/core) into /agent.
 RUN pnpm install --frozen-lockfile --filter "@feckbills/cli..." \
  && pnpm --filter @feckbills/core build \
  && pnpm --filter @feckbills/cli build \
- && pnpm --filter @feckbills/cli deploy --prod /agent
+ && pnpm --filter @feckbills/cli deploy --prod --legacy /agent
 
 FROM node:22-alpine
 WORKDIR /agent
