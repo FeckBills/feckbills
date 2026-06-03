@@ -53,6 +53,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
+          # latest=auto → a semver tag push (v1.2.3) also publishes `:latest`.
+          # The raw rule below additionally moves `:latest` on a manual run from
+          # the default branch. Both matter: /console/deploy points at `:latest`.
+          flavor: |
+            latest=auto
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
