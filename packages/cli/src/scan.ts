@@ -5,7 +5,7 @@ import type { ComputeSource, Detector, DetectorContext, MetricSource } from "./d
 import type { AwsDetectorContext, AwsResourceSource } from "./detectors/aws-types.js";
 import type { AzureDetectorContext, AzureResourceSource } from "./detectors/azure-types.js";
 
-export const AGENT_VERSION = "0.0.0";
+export const AGENT_VERSION = "0.1.1";
 
 interface AssembleOptions<Ctx> {
   provider: Provider;
