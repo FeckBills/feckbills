@@ -7,7 +7,7 @@
 A read-only CLI that scans your cloud account for wasted spend — orphaned, idle,
 and over-provisioned resources — and tells you the **exact fix**, priced in **£/mo**.
 
-[feckbills.com](https://feckbills.com) · GCP/GKE today · AWS & Azure next
+[feckbills.com](https://feckbills.com) · AWS · GCP · Azure
 
 <br>
 
@@ -31,17 +31,27 @@ no write access, no secrets leave your account — just findings.
 ## Quickstart
 
 ```bash
-# 1. Authenticate read-only (uses Application Default Credentials)
-gcloud auth application-default login
-
-# 2. Scan a project
+# --- GCP ---
+gcloud auth application-default login          # read-only ADC
 npx feckbills scan --project YOUR_PROJECT_ID
+
+# --- AWS ---  (uses the standard credential chain: env / profile / IAM role)
+export AWS_REGION=eu-west-2
+npx feckbills scan --provider aws              # one region
+npx feckbills scan --provider aws --all-regions
+
+# --- Azure ---  (uses az login / env SP / managed identity)
+az login
+npx feckbills scan --provider azure --subscription YOUR_SUB_ID
+npx feckbills scan --provider azure --all-subscriptions
 ```
 
 No cloud handy? Run the whole loop on canned data, zero credentials:
 
 ```bash
-npx feckbills scan --fixture
+npx feckbills scan --fixture                     # GCP
+npx feckbills scan --provider aws --fixture      # AWS
+npx feckbills scan --provider azure --fixture    # Azure
 ```
 
 > Until the npm package + container image are published, build from source — see
@@ -49,7 +59,7 @@ npx feckbills scan --fixture
 
 ## What it finds
 
-GCP today (AWS & Azure next):
+**GCP** (`--provider gcp`, the default):
 
 | Detector | What it catches |
 | --- | --- |
@@ -59,6 +69,26 @@ GCP today (AWS & Azure next):
 | **Orphaned & stale snapshots** | Snapshots whose source disk is gone, or long-stale |
 | **Disks on stopped VMs** | Disks still billing on `TERMINATED` instances |
 | **Idle Compute Engine VMs** | Running VMs with near-zero CPU over the window |
+
+**AWS** (`--provider aws`):
+
+| Detector | What it catches |
+| --- | --- |
+| **Unattached EBS volumes** | Volumes in the `available` state, billed for nothing |
+| **Unassociated Elastic IPs** | EIPs you're billed for since AWS started charging for idle IPv4 |
+| **Orphaned & stale EBS snapshots** | Snapshots whose source volume is gone, or long-stale |
+| **EBS on stopped instances** | Volumes still billing on stopped EC2 instances |
+| **Idle EC2 instances** | Running instances with near-zero CPU (CloudWatch) over the window |
+
+**Azure** (`--provider azure`):
+
+| Detector | What it catches |
+| --- | --- |
+| **Unattached managed disks** | Disks in the `Unattached` state, billed for their tier |
+| **Unassociated public IPs** | Reserved public IPs not bound to any resource |
+| **Orphaned & stale snapshots** | Snapshots whose source disk is gone, or long-stale |
+| **Disks on deallocated VMs** | Managed disks still billing on deallocated/stopped VMs |
+| **Idle virtual machines** | Running VMs with near-zero CPU (Azure Monitor) over the window |
 
 Every finding is priced in £/mo (an estimate of reclaimable capacity), ranked by impact,
 and comes with the **why** and the **fix**.
@@ -71,8 +101,13 @@ feckbills scan [options]
 
 | Flag | Description |
 | --- | --- |
-| `--project <id>` | Scan one project |
-| `--all-projects [--limit N]` | Discover & scan every project the credential can see |
+| `--provider <gcp\|aws>` | Cloud to scan (default `gcp`) |
+| `--project <id>` | **[gcp]** Scan one project |
+| `--all-projects [--limit N]` | **[gcp]** Discover & scan every project the credential can see |
+| `--region <region>` | **[aws]** Region to scan (defaults to `AWS_REGION`) |
+| `--all-regions` | **[aws]** Scan every enabled region in the account |
+| `--subscription <id>` | **[azure]** Subscription to scan (defaults to `AZURE_SUBSCRIPTION_ID`) |
+| `--all-subscriptions` | **[azure]** Scan every subscription the credential can see |
 | `--window <days>` | Usage look-back window (default `14`) |
 | `--currency <code>` | Report currency (default `GBP`) |
 | `--out <file.md>` | Write a markdown report |
@@ -93,13 +128,16 @@ and savings figures. Never raw resource data, never secrets, never write actions
 
 Least-privilege roles it needs:
 
-- `roles/monitoring.viewer`
-- `roles/compute.viewer`
-- `roles/browser` (for `--all-projects` discovery)
+- **GCP:** `roles/monitoring.viewer`, `roles/compute.viewer`, plus `roles/browser` (for `--all-projects` discovery)
+- **AWS:** read-only EC2 + CloudWatch (the AWS-managed `ReadOnlyAccess` or `ViewOnlyAccess` policy covers it, as does a tighter policy with `ec2:Describe*` + `cloudwatch:GetMetricData` + `sts:GetCallerIdentity`)
+- **Azure:** the built-in **Reader** role on the subscription (Compute + Network + Monitor reads)
 
-It works non-interactively with a service-account key too
-(`GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json`), so you can run it as a
-Cloud Run job, k8s CronJob, or `docker run` on a schedule.
+It works non-interactively with a service-account key (GCP:
+`GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json`), static/role credentials
+(AWS: env vars, a named `AWS_PROFILE`, or an attached IAM role), or a service
+principal / managed identity (Azure: `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` /
+`AZURE_CLIENT_SECRET`), so you can run it as a Cloud Run job, k8s CronJob, or
+`docker run` on a schedule.
 
 ## Hosted console (optional)
 
@@ -132,6 +170,13 @@ Or run it straight from TypeScript without building:
 
 ```bash
 pnpm --filter @feckbills/cli dev scan --fixture
+```
+
+Run the test suite (Vitest — pricing, detectors against the fixtures, and the
+provider SDK→domain mapping):
+
+```bash
+pnpm test
 ```
 
 ### Container

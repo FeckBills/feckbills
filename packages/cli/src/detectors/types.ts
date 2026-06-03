@@ -95,10 +95,17 @@ export interface DetectorResult {
   estimatedMonthlySpend?: number;
 }
 
-export interface Detector {
+/**
+ * A detector, generic over the context shape it consumes. GCP detectors use the
+ * default (GCP-shaped) `DetectorContext`; AWS detectors specialise to
+ * `AwsDetectorContext` (see `aws-types.ts`). The scan assembler is generic over
+ * the same `Ctx`, so each provider's detectors are type-checked against the
+ * sources they actually receive.
+ */
+export interface Detector<Ctx = DetectorContext> {
   id: string;
   provider: Provider;
   /** Short human title for the report and logs. */
   title: string;
-  run(ctx: DetectorContext): Promise<DetectorResult>;
+  run(ctx: Ctx): Promise<DetectorResult>;
 }

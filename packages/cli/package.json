@@ -10,13 +10,26 @@
     "dev": "tsx src/index.ts",
     "scan": "tsx src/index.ts scan",
     "build": "tsup",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
+    "@aws-sdk/client-cloudwatch": "^3.1061.0",
+    "@aws-sdk/client-ec2": "^3.1061.0",
+    "@aws-sdk/client-sts": "^3.1061.0",
+    "@azure/arm-compute": "^22.4.0",
+    "@azure/arm-monitor": "^7.0.0",
+    "@azure/arm-network": "^33.5.0",
+    "@azure/arm-subscriptions": "^5.1.1",
+    "@azure/identity": "^4.13.1",
     "@feckbills/core": "workspace:*",
     "@google-cloud/monitoring": "^4.1.0",
     "commander": "^12.1.0",
     "google-auth-library": "^10.6.2",
     "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.9"
   }
 }
