@@ -15,6 +15,11 @@ const BYTES_PER_GIB = 1024 ** 3;
 
 export interface NamespaceActivity {
   namespace: string;
+  /** GKE cluster this namespace lives in (Monitoring `cluster_name`). A project
+   *  can run several clusters, each with its own `prod`/`default`/etc. */
+  cluster: string;
+  /** Cluster location (region or zone) — disambiguates same-named clusters. */
+  location: string;
   reservedCores: number;
   reservedGib: number;
   usedCores: number;
@@ -56,6 +61,17 @@ const COMMON_ADDONS = new Set([
 
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
+/** A namespace is identified by (cluster, location, name) — a bare name can
+ *  recur across clusters. We key the per-metric maps by this composite so two
+ *  clusters' `prod` namespaces never merge. All three are DNS-1123 labels, so
+ *  `/` can't appear in any of them. */
+const SEP = "/";
+const nsKey = (cluster: string, location: string, namespace: string) => `${cluster}${SEP}${location}${SEP}${namespace}`;
+const splitNsKey = (key: string): { cluster: string; location: string; namespace: string } => {
+  const [cluster, location, namespace] = key.split(SEP);
+  return { cluster: cluster ?? "", location: location ?? "", namespace: namespace ?? "" };
+};
+
 /** Map each LB backend-service name → its k8s `namespace/service` (from the
  *  backend service's GKE-populated `description`). The join key for LB metrics. */
 export async function backendServiceMap(projectId: string): Promise<Map<string, { namespace: string; service: string }>> {
@@ -96,7 +112,9 @@ function parseServiceName(description: string | undefined): { namespace: string;
   }
 }
 
-/** One grouped, reduced Monitoring query → `namespace → points[]` (chronological). */
+/** One grouped, reduced Monitoring query → `cluster/location/namespace → points[]`
+ *  (chronological). Grouping by cluster + location keeps same-named namespaces in
+ *  different clusters distinct, instead of summing them into one row. */
 async function seriesByNamespace(
   metrics: MetricSource,
   metricType: string,
@@ -114,12 +132,13 @@ async function seriesByNamespace(
       alignmentSeconds,
       perSeriesAligner: aligner,
       crossSeriesReducer: "REDUCE_SUM",
-      groupByFields: ["resource.label.namespace_name"],
+      groupByFields: ["resource.label.cluster_name", "resource.label.location", "resource.label.namespace_name"],
     });
     for (const s of series) {
       const ns = s.labels.namespace_name;
+      if (!ns) continue;
       // Monitoring returns newest-first; reverse for a chronological heatmap row.
-      if (ns) out.set(ns, [...s.points].reverse());
+      out.set(nsKey(s.labels.cluster_name ?? "", s.labels.location ?? "", ns), [...s.points].reverse());
     }
   } catch {
     // A missing metric (e.g. no GKE in the project) just yields an empty map.
@@ -178,17 +197,22 @@ export async function namespaceReport(
     requestsByNamespace(metrics, backends, windowDays),
   ]);
 
-  const names = new Set<string>([...reservedCores.keys(), ...usedSeries.keys(), ...netIn.keys(), ...netOut.keys(), ...reqs.keys()]);
+  // The metric maps are keyed by cluster/location/namespace; `reqs` only by
+  // namespace name (LB backends carry no cluster), so it's joined separately.
+  const keys = new Set<string>([...reservedCores.keys(), ...usedSeries.keys(), ...netIn.keys(), ...netOut.keys()]);
   const rates = gkeRates(env);
 
   const rows: NamespaceActivity[] = [];
-  for (const namespace of names) {
-    const rCores = mean(reservedCores.get(namespace) ?? []);
-    const rGib = mean(reservedBytes.get(namespace) ?? []) / BYTES_PER_GIB;
-    const series = usedSeries.get(namespace) ?? [];
+  for (const key of keys) {
+    const { cluster, location, namespace } = splitNsKey(key);
+    const rCores = mean(reservedCores.get(key) ?? []);
+    const rGib = mean(reservedBytes.get(key) ?? []) / BYTES_PER_GIB;
+    const series = usedSeries.get(key) ?? [];
     const used = mean(series);
-    const inK = mean(netIn.get(namespace) ?? []) / 1024;
-    const outK = mean(netOut.get(namespace) ?? []) / 1024;
+    const inK = mean(netIn.get(key) ?? []) / 1024;
+    const outK = mean(netOut.get(key) ?? []) / 1024;
+    // Can't attribute LB traffic to a specific cluster — apply it to every
+    // cluster sharing the name. Conservative: it only ever suppresses an idle flag.
     const req = reqs.get(namespace) ?? 0;
     const system = isSystemNamespace(namespace);
     const addon = COMMON_ADDONS.has(namespace);
@@ -196,6 +220,8 @@ export async function namespaceReport(
       !system && !addon && rCores > 0 && used < IDLE_USED_CORES && inK + outK < IDLE_NET_KIBS && req < IDLE_REQ_PER_SEC;
     rows.push({
       namespace,
+      cluster,
+      location,
       reservedCores: rCores,
       reservedGib: rGib,
       usedCores: used,
@@ -211,5 +237,9 @@ export async function namespaceReport(
     });
   }
 
-  return rows.sort((a, b) => b.reservedMonthlyGbp - a.reservedMonthlyGbp);
+  // Group by cluster, then by reclaimable £/mo within each — the order both the
+  // terminal report and the console's per-cluster sections render in.
+  return rows.sort((a, b) =>
+    a.cluster === b.cluster ? b.reservedMonthlyGbp - a.reservedMonthlyGbp : a.cluster.localeCompare(b.cluster),
+  );
 }

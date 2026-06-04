@@ -23,6 +23,27 @@ import { renderMarkdown } from "./report/markdown.js";
 import { renderTerminal } from "./report/terminal.js";
 import { pushScan } from "./push.js";
 
+/** Hosted console ingest endpoint — used when `--push` is given without a URL. */
+const DEFAULT_INGEST_URL = "https://feckbills.com/api/ingest";
+
+/**
+ * Best-effort GKE namespace activity for a project — the heatmap data. Needs
+ * Monitoring + the backend-service list; yields `undefined` for non-GKE projects
+ * or when metrics are off. Shared by the single- and all-project scan paths.
+ */
+async function namespaceActivityFor(
+  metrics: MetricSource,
+  projectId: string,
+  windowDays: number,
+): Promise<NamespaceActivity[] | undefined> {
+  try {
+    const rows = await namespaceReport(metrics, projectId, windowDays);
+    return rows.length > 0 ? rows : undefined;
+  } catch {
+    return undefined; // no cluster / metrics off — ship the scan without it
+  }
+}
+
 const program = new Command();
 
 program
@@ -44,7 +65,7 @@ program
   .option("-o, --out <file>", "write the markdown report to a file")
   .option("--json", "print the raw scan JSON to stdout instead of the terminal summary", false)
   .option("--fixture", "run against canned data — no cloud credentials needed", false)
-  .option("--push <url>", "POST findings to a FeckBills console ingest endpoint")
+  .option("--push [url]", "POST findings to a FeckBills console (defaults to feckbills.com; set FECKBILLS_PUSH_URL to override)")
   .option("--token <token>", "ingest token for --push (or set FECKBILLS_INGEST_TOKEN)")
   .option("--all-projects", "[gcp] discover and scan every project the credential can see", false)
   .option("--limit <n>", "with --all-projects, cap how many projects to scan")
@@ -64,6 +85,9 @@ program
       fail(`--currency must be one of GBP, USD, EUR — got "${opts.currency}"`);
     }
     const currency: Currency = currencyParsed.data;
+
+    // `--push` with no URL falls back to the hosted console (env override, else prod).
+    if (opts.push === true) opts.push = process.env.FECKBILLS_PUSH_URL ?? DEFAULT_INGEST_URL;
 
     // Resolve the ingest token early so we fail before scanning, not after.
     const ingestToken: string | undefined = opts.push
@@ -203,12 +227,15 @@ program
       let pushed = 0;
       let withWaste = 0;
       for (const p of projects) {
+        const metrics = new MonitoringClient(metricClient, p.projectId);
+        const namespaceActivity = await namespaceActivityFor(metrics, p.projectId, windowDays);
         const scan = await runScan({
           projectId: p.projectId,
           windowDays,
           currency,
-          metrics: new MonitoringClient(metricClient, p.projectId),
+          metrics,
           compute: new GcpComputeClient(p.projectId),
+          namespaceActivity,
         });
         const total = totalSaving(scan);
         grandTotal += total;
@@ -263,17 +290,8 @@ program
       console.error(pc.dim(`  scanning ${projectId} (${windowDays}d window)…`));
     }
 
-    // GKE namespace activity for the heatmap (real GCP only — needs Monitoring +
-    // the backend-service list; empty for non-GKE projects). Best-effort.
-    let namespaceActivity;
-    if (!opts.fixture) {
-      try {
-        const rows = await namespaceReport(metrics, projectId, windowDays);
-        if (rows.length > 0) namespaceActivity = rows;
-      } catch {
-        // No cluster / metrics off — just ship the scan without it.
-      }
-    }
+    // GKE namespace activity for the heatmap (real GCP only; empty for non-GKE).
+    const namespaceActivity = opts.fixture ? undefined : await namespaceActivityFor(metrics, projectId, windowDays);
 
     const scan = await runScan({ projectId, windowDays, currency, metrics, compute, namespaceActivity, onDetector });
     await emitScan(scan, opts, ingestToken);
@@ -375,22 +393,35 @@ function renderNamespaces(rows: NamespaceActivity[], projectId: string, windowDa
   const RAMP = " ▁▂▃▄▅▆▇█";
   const glyph = (used: number) => RAMP[Math.min(RAMP.length - 1, Math.round((used / maxUsed) * (RAMP.length - 1)))]!;
 
-  for (const r of rows) {
-    const intensity = r.usedCores < 0.02 ? pc.dim("·") : pc.green(glyph(r.usedCores));
-    const name = r.namespace.slice(0, 24).padEnd(24);
-    const cost = formatMonthly(r.reservedMonthlyGbp).padStart(9);
-    const used = `${r.usedCores.toFixed(2)}c`.padStart(7);
-    const net = `${Math.round(r.netInKiBs + r.netOutKiBs)}KiB/s`.padStart(11);
-    const req = `${r.reqPerSec.toFixed(2)}/s`.padStart(8);
-    const tag = r.system
-      ? pc.dim("system")
-      : r.addon
-        ? pc.dim("infra")
-        : r.idle
-          ? pc.yellow(pc.bold("IDLE — reclaim"))
-          : pc.green("live");
-    const line = `  ${intensity}  ${name} ${cost}  ${used} ${net} ${req}  ${tag}`;
-    out.push(r.system || r.addon ? pc.dim(line) : line);
+  // Section per cluster (rows arrive grouped by cluster). A project can run
+  // several clusters, each with its own namespaces — never merge them.
+  const clusters = [...new Set(rows.map((r) => r.cluster))];
+  for (const cluster of clusters) {
+    const group = rows.filter((r) => r.cluster === cluster);
+    const groupIdle = group.filter((r) => r.idle);
+    if (clusters.length > 1 || cluster) {
+      const label = cluster || "(unknown cluster)";
+      const loc = group[0]?.location ? pc.dim(` · ${group[0].location}`) : "";
+      const tally = groupIdle.length > 0 ? pc.yellow(` · ${groupIdle.length} idle`) : "";
+      out.push(pc.cyan(`  ▸ ${label}`) + loc + tally);
+    }
+    for (const r of group) {
+      const intensity = r.usedCores < 0.02 ? pc.dim("·") : pc.green(glyph(r.usedCores));
+      const name = r.namespace.slice(0, 24).padEnd(24);
+      const cost = formatMonthly(r.reservedMonthlyGbp).padStart(9);
+      const used = `${r.usedCores.toFixed(2)}c`.padStart(7);
+      const net = `${Math.round(r.netInKiBs + r.netOutKiBs)}KiB/s`.padStart(11);
+      const req = `${r.reqPerSec.toFixed(2)}/s`.padStart(8);
+      const tag = r.system
+        ? pc.dim("system")
+        : r.addon
+          ? pc.dim("infra")
+          : r.idle
+            ? pc.yellow(pc.bold("IDLE — reclaim"))
+            : pc.green("live");
+      const line = `  ${intensity}  ${name} ${cost}  ${used} ${net} ${req}  ${tag}`;
+      out.push(r.system || r.addon ? pc.dim(line) : line);
+    }
   }
 
   out.push("");

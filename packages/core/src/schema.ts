@@ -68,6 +68,11 @@ export type Finding = z.infer<typeof FindingSchema>;
  */
 export const NamespaceActivitySchema = z.object({
   namespace: z.string(),
+  /** GKE cluster the namespace lives in — a project can run several clusters,
+   *  each with its own `prod`/`default`/etc. Empty for pre-cluster-aware scans. */
+  cluster: z.string().default(""),
+  /** Cluster location (region/zone) — disambiguates same-named clusters. */
+  location: z.string().default(""),
   reservedCores: z.number().nonnegative(),
   reservedGib: z.number().nonnegative(),
   usedCores: z.number().nonnegative(),
