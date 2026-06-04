@@ -1,4 +1,4 @@
-import type { Currency, DetectorRun, Finding, Provider, Scan } from "@feckbills/core";
+import type { Currency, DetectorRun, Finding, NamespaceActivity, Provider, Scan } from "@feckbills/core";
 import { ScanSchema } from "@feckbills/core";
 import { detectorsFor, awsDetectors, azureDetectors } from "./detectors/registry.js";
 import type { ComputeSource, Detector, DetectorContext, MetricSource } from "./detectors/types.js";
@@ -14,6 +14,8 @@ interface AssembleOptions<Ctx> {
   windowDays: number;
   detectors: Detector<Ctx>[];
   context: Ctx;
+  /** Optional GKE namespace activity to attach (GCP only). */
+  namespaceActivity?: NamespaceActivity[];
   /** Called as each detector finishes, for live CLI progress. */
   onDetector?: (run: DetectorRun) => void;
 }
@@ -74,6 +76,7 @@ async function assembleScan<Ctx>(opts: AssembleOptions<Ctx>): Promise<Scan> {
     estimatedMonthlySpend: estimatedMonthlySpend > 0 ? estimatedMonthlySpend : undefined,
     detectorRuns,
     findings: findings.sort((a, b) => b.estimatedMonthlySaving - a.estimatedMonthlySaving),
+    namespaceActivity: opts.namespaceActivity,
   };
 
   // Validate our own output — catches detector contract drift early.
@@ -87,6 +90,8 @@ export interface ScanOptions {
   metrics: MetricSource;
   compute: ComputeSource;
   env?: NodeJS.ProcessEnv;
+  /** GKE namespace activity to attach to the scan (computed by the caller). */
+  namespaceActivity?: NamespaceActivity[];
   onDetector?: (run: DetectorRun) => void;
 }
 
@@ -107,6 +112,7 @@ export async function runScan(opts: ScanOptions): Promise<Scan> {
     windowDays: opts.windowDays,
     detectors: detectorsFor("gcp"),
     context,
+    namespaceActivity: opts.namespaceActivity,
     onDetector: opts.onDetector,
   });
 }

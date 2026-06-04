@@ -8,6 +8,7 @@ import { MonitoringClient } from "./providers/gcp/monitoring.js";
 import { GcpComputeClient } from "./providers/gcp/compute.js";
 import { FixtureComputeSource, FixtureMetricSource } from "./providers/gcp/fixture.js";
 import { listAccessibleProjects } from "./providers/gcp/projects.js";
+import { namespaceReport, type NamespaceActivity } from "./providers/gcp/gke-activity.js";
 import { AwsAuthError, resolveAwsContext } from "./providers/aws/auth.js";
 import { AwsResourceClient } from "./providers/aws/ec2.js";
 import { FixtureAwsResourceSource } from "./providers/aws/fixture.js";
@@ -262,7 +263,19 @@ program
       console.error(pc.dim(`  scanning ${projectId} (${windowDays}d window)…`));
     }
 
-    const scan = await runScan({ projectId, windowDays, currency, metrics, compute, onDetector });
+    // GKE namespace activity for the heatmap (real GCP only — needs Monitoring +
+    // the backend-service list; empty for non-GKE projects). Best-effort.
+    let namespaceActivity;
+    if (!opts.fixture) {
+      try {
+        const rows = await namespaceReport(metrics, projectId, windowDays);
+        if (rows.length > 0) namespaceActivity = rows;
+      } catch {
+        // No cluster / metrics off — just ship the scan without it.
+      }
+    }
+
+    const scan = await runScan({ projectId, windowDays, currency, metrics, compute, namespaceActivity, onDetector });
     await emitScan(scan, opts, ingestToken);
   });
 
@@ -312,6 +325,86 @@ async function emitScan(
   }
 
   if (scan.status === "failed") process.exitCode = 1;
+}
+
+program
+  .command("namespaces")
+  .description("GKE namespace activity — which namespaces are actually used (read-only, GCP)")
+  .option("-p, --project <id>", "GCP project id (defaults to ADC / gcloud config)")
+  .option("-w, --window <days>", "look-back window in days", "7")
+  .option("--json", "output the raw activity rows as JSON", false)
+  .action(async (opts) => {
+    const windowDays = Number(opts.window);
+    if (!Number.isFinite(windowDays) || windowDays <= 0) fail(`--window must be positive, got "${opts.window}"`);
+
+    let ctx;
+    try {
+      ctx = await resolveGcpContext(opts.project);
+    } catch (err) {
+      if (err instanceof GcpAuthError) fail(err.message);
+      throw err;
+    }
+
+    if (!opts.json) console.error(pc.dim(`  reading namespace activity for ${ctx.projectId} (${windowDays}d)…`));
+    const rows = await namespaceReport(new MonitoringClient(ctx.client, ctx.projectId), ctx.projectId, windowDays);
+
+    if (opts.json) {
+      process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
+      return;
+    }
+    process.stdout.write(renderNamespaces(rows, ctx.projectId, windowDays) + "\n");
+  });
+
+/** Terminal "heatmap" of namespace activity + idle/zombie flags. */
+function renderNamespaces(rows: NamespaceActivity[], projectId: string, windowDays: number): string {
+  const out: string[] = [""];
+  out.push(pc.bold(`  GKE namespace activity — ${projectId}`));
+  out.push(pc.dim(`  ${windowDays}d window · usage / network / request traffic`));
+  out.push("");
+
+  if (rows.length === 0) {
+    out.push(pc.dim("  No GKE namespaces found (no cluster, or system metrics off)."));
+    return out.join("\n") + "\n";
+  }
+
+  const idle = rows.filter((r) => r.idle);
+  const idleReclaim = idle.reduce((s, r) => s + r.reservedMonthlyGbp, 0);
+
+  // Intensity glyph from CPU usage, relative to the busiest namespace.
+  const maxUsed = Math.max(...rows.map((r) => r.usedCores), 0.001);
+  const RAMP = " ▁▂▃▄▅▆▇█";
+  const glyph = (used: number) => RAMP[Math.min(RAMP.length - 1, Math.round((used / maxUsed) * (RAMP.length - 1)))]!;
+
+  for (const r of rows) {
+    const intensity = r.usedCores < 0.02 ? pc.dim("·") : pc.green(glyph(r.usedCores));
+    const name = r.namespace.slice(0, 24).padEnd(24);
+    const cost = formatMonthly(r.reservedMonthlyGbp).padStart(9);
+    const used = `${r.usedCores.toFixed(2)}c`.padStart(7);
+    const net = `${Math.round(r.netInKiBs + r.netOutKiBs)}KiB/s`.padStart(11);
+    const req = `${r.reqPerSec.toFixed(2)}/s`.padStart(8);
+    const tag = r.system
+      ? pc.dim("system")
+      : r.addon
+        ? pc.dim("infra")
+        : r.idle
+          ? pc.yellow(pc.bold("IDLE — reclaim"))
+          : pc.green("live");
+    const line = `  ${intensity}  ${name} ${cost}  ${used} ${net} ${req}  ${tag}`;
+    out.push(r.system || r.addon ? pc.dim(line) : line);
+  }
+
+  out.push("");
+  if (idle.length > 0) {
+    out.push(
+      `  ${pc.yellow(pc.bold(`${idle.length} idle namespace(s)`))} holding ${pc.bold(formatMonthly(idleReclaim))} of reserved compute — ` +
+        pc.dim("near-zero CPU, network and request traffic over the window."),
+    );
+    out.push(pc.dim("  Verify they're not deliberate standby/DR before deleting."));
+  } else {
+    out.push(pc.dim("  No idle namespaces — everything's doing something."));
+  }
+  out.push("");
+  return out.join("\n");
 }
 
 function fail(message: string): never {

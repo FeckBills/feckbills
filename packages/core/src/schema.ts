@@ -59,6 +59,32 @@ export const FindingSchema = z.object({
 });
 export type Finding = z.infer<typeof FindingSchema>;
 
+/**
+ * Per-namespace GKE activity (CLAUDE.md §5 GKE). Derived read-only from Cloud
+ * Monitoring + the LB backend map — reserved vs used CPU, network, and request
+ * traffic, plus a per-time-bucket usage `series` (the heatmap row). Lets the
+ * console show which namespaces are actually used and rank reclaim candidates;
+ * the user decides, aided by the heatmap, rather than a hard "zombie" verdict.
+ */
+export const NamespaceActivitySchema = z.object({
+  namespace: z.string(),
+  reservedCores: z.number().nonnegative(),
+  reservedGib: z.number().nonnegative(),
+  usedCores: z.number().nonnegative(),
+  netInKiBs: z.number().nonnegative(),
+  netOutKiBs: z.number().nonnegative(),
+  reqPerSec: z.number().nonnegative(),
+  /** Reclaimable £/mo if the namespace is dead (its reserved compute). */
+  reservedMonthlyGbp: z.number().nonnegative(),
+  /** GKE-managed system namespace (kube-system, gke-*). */
+  system: z.boolean(),
+  /** Known idle-by-design cluster add-on (cert-manager, external-dns, …). */
+  addon: z.boolean(),
+  /** used-CPU cores per time bucket, chronological — the heatmap row. */
+  series: z.array(z.number()).default([]),
+});
+export type NamespaceActivity = z.infer<typeof NamespaceActivitySchema>;
+
 export const ScanStatusSchema = z.enum(["running", "completed", "failed", "partial"]);
 export type ScanStatus = z.infer<typeof ScanStatusSchema>;
 
@@ -90,6 +116,8 @@ export const ScanSchema = z.object({
   estimatedMonthlySpend: z.number().nonnegative().optional(),
   detectorRuns: z.array(DetectorRunSchema).default([]),
   findings: z.array(FindingSchema).default([]),
+  /** GKE namespace activity (GCP-only; omitted when there's no cluster). */
+  namespaceActivity: z.array(NamespaceActivitySchema).optional(),
 });
 export type Scan = z.infer<typeof ScanSchema>;
 

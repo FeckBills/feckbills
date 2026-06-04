@@ -48,7 +48,7 @@ const SYSTEM_NAMESPACE_PREFIXES = [
   "anthos",
 ];
 
-function isSystemNamespace(ns: string): boolean {
+export function isSystemNamespace(ns: string): boolean {
   if (SYSTEM_NAMESPACES.has(ns)) return true;
   return SYSTEM_NAMESPACE_PREFIXES.some((p) => ns === p || ns.startsWith(`${p}-`) || ns.startsWith(p));
 }
