@@ -1,6 +1,6 @@
 {
   "name": "feckbills",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "description": "Read-only CLI that finds wasted cloud spend — orphaned, idle & over-provisioned resources — and prices the fix in £/mo. AWS, GCP, and Azure.",
   "type": "module",
